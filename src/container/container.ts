@@ -1,10 +1,13 @@
-import { ServiceNotFoundError } from '../errors';
-import { EMPTY_VALUE, type ContainerIdentifier, type Metadata, type ServiceIdentifier } from '../types';
+import { CircularDependencyError, ServiceNotFoundError } from '../errors';
+import type { ContainerIdentifier, Metadata, ServiceIdentifier } from '../types';
+import { EMPTY_VALUE } from '../types';
 
 export class Container {
   public readonly id: ContainerIdentifier;
 
   private metadataMap: Map<ServiceIdentifier, Metadata> = new Map();
+  private resolving = new Set<ServiceIdentifier>();
+  private resolvingPath: ServiceIdentifier[] = [];
 
   constructor(id: ContainerIdentifier) {
     this.id = id;
@@ -39,20 +42,32 @@ export class Container {
       return metadata.value as T;
     }
 
-    const instance = new metadata.Class() as T;
-
-    if (metadata.scope !== 'transient') {
-      metadata.value = instance;
+    if (this.resolving.has(id)) {
+      throw new CircularDependencyError([...this.resolvingPath, id]);
     }
 
-    for (const injection of metadata.injections) {
-      Object.defineProperty(instance, injection.name, {
-        value: this.get(injection.id),
-        writable: true,
-        configurable: true,
-      });
-    }
+    this.resolving.add(id);
+    this.resolvingPath.push(id);
 
-    return instance;
+    try {
+      const instance = new metadata.Class() as T;
+
+      if (metadata.scope !== 'transient') {
+        metadata.value = instance;
+      }
+
+      for (const injection of metadata.injections) {
+        Object.defineProperty(instance, injection.name, {
+          value: this.get(injection.id),
+          writable: true,
+          configurable: true,
+        });
+      }
+
+      return instance;
+    } finally {
+      this.resolving.delete(id);
+      this.resolvingPath.pop();
+    }
   }
 }
