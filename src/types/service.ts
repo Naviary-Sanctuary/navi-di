@@ -6,6 +6,9 @@ export type ServiceIdentifier<T = unknown, Args extends unknown[] = never[]> =
   | CallableFunction
   | string;
 
+export type ServiceScope = 'singleton' | 'container' | 'transient';
+
 export interface ServiceOption {
   id: ServiceIdentifier;
+  scope?: ServiceScope;
 }

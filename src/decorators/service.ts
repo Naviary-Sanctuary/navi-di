@@ -1,6 +1,6 @@
 import { ContainerRegistry } from '../container/registry';
 import type { Constructable, InjectionMetadata, ServiceOption } from '../types';
-import { INJECTION_KEY } from '../types';
+import { INJECTION_KEY, EMPTY_VALUE } from '../types';
 
 export function Service(): Function;
 export function Service<T>(options?: ServiceOption) {
@@ -12,6 +12,8 @@ export function Service<T>(options?: ServiceOption) {
       Class: target,
       name: context.name,
       injections,
+      scope: options?.scope ?? 'container',
+      value: EMPTY_VALUE,
     });
   };
 }

@@ -1,5 +1,5 @@
 import { ServiceNotFoundError } from '../errors';
-import type { ContainerIdentifier, Metadata, ServiceIdentifier } from '../types';
+import { EMPTY_VALUE, type ContainerIdentifier, type Metadata, type ServiceIdentifier } from '../types';
 
 export class Container {
   public readonly id: ContainerIdentifier;
@@ -35,7 +35,15 @@ export class Container {
       throw new ServiceNotFoundError(id);
     }
 
+    if (metadata.value !== EMPTY_VALUE) {
+      return metadata.value as T;
+    }
+
     const instance = new metadata.Class() as T;
+
+    if (metadata.scope !== 'transient') {
+      metadata.value = instance;
+    }
 
     for (const injection of metadata.injections) {
       Object.defineProperty(instance, injection.name, {
