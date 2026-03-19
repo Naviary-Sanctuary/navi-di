@@ -3,7 +3,7 @@
   "ignorePatterns": ["dist/**", "coverage/**", "node_modules/**"],
   "plugins": ["typescript", "import"],
   "categories": {
-    "correctness": "error",
+    "correctness": "error"
   },
   "rules": {
     "no-unused-vars": [

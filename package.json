@@ -43,7 +43,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
     "hooks:install": "lefthook install",
     "hooks:validate": "lefthook validate",
