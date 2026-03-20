@@ -20,7 +20,7 @@ export class Container {
     }
 
     if (ContainerRegistry.hasContainer(id)) {
-      return ContainerRegistry.getContainer(id);
+      return ContainerRegistry.getContainer(id)!;
     }
 
     const container = new Container(id);
@@ -109,16 +109,16 @@ export class Container {
     try {
       const instance = new metadata.Class() as T;
 
-      if (metadata.scope !== 'transient') {
-        metadata.value = instance;
-      }
-
       for (const injection of metadata.injections) {
         Object.defineProperty(instance, injection.name, {
           value: this.get(injection.id),
           writable: true,
           configurable: true,
         });
+      }
+
+      if (metadata.scope !== 'transient') {
+        metadata.value = instance;
       }
 
       return instance;

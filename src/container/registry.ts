@@ -3,9 +3,15 @@ import type { ContainerIdentifier } from '../types';
 import { Container } from './container';
 
 export class ContainerRegistry {
-  public static readonly defaultContainer: Container = new Container('default');
+  private static defaultContainerInstance?: Container;
 
   private static readonly containerMap: Map<ContainerIdentifier, Container> = new Map();
+
+  public static get defaultContainer(): Container {
+    this.defaultContainerInstance ??= new Container('default');
+
+    return this.defaultContainerInstance;
+  }
 
   public static registerContainer(container: Container) {
     if (container.id === 'default') {
