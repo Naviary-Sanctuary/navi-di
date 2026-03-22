@@ -136,6 +136,23 @@ describe('Container', () => {
     expect(second).not.toBe(Container.of().get(ResettableService));
   });
 
+  test('reset specific container with static method', () => {
+    class ResettableService {}
+
+    Container.of('container').set({
+      id: ResettableService,
+      Class: ResettableService,
+      name: 'ResettableService',
+      injections: [],
+      scope: 'container',
+      value: EMPTY_VALUE,
+    });
+
+    Container.reset('container', { strategy: 'service' });
+
+    expect(() => ContainerRegistry.getContainer('container')?.get(ResettableService)).toThrow(ServiceNotFoundError);
+  });
+
   test('has only reports local registrations', () => {
     const requestContainer = Container.of('container-local-has');
 

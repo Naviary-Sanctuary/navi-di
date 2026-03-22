@@ -131,4 +131,10 @@ export class Container {
   private isDefault() {
     return this === ContainerRegistry.defaultContainer;
   }
+
+  static reset(containerId: ContainerIdentifier, options?: { strategy?: 'value' | 'service' }) {
+    const container = ContainerRegistry.getContainer(containerId);
+
+    container?.reset(options?.strategy);
+  }
 }
