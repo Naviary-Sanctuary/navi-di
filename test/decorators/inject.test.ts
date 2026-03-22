@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { Container, Inject, Service } from '../../src';
+import { Container, Inject, Service, Token } from '../../src';
 import { ContainerRegistry } from '../../src/container/registry';
 
 afterEach(() => {
@@ -68,5 +68,24 @@ describe('Inject Decorator', () => {
 
     expect(handler.logger).toBe(requestContainer.get(LoggerService));
     expect(handler.logger).not.toBe(Container.of().get(LoggerService));
+  });
+
+  test('injects a token-identified dependency into a decorated class field', () => {
+    interface Logger {
+      log(message: string): void;
+    }
+    const LOGGER = new Token<Logger>('Logger');
+    @Service(LOGGER)
+    class ConsoleLogger implements Logger {
+      public log(_: string) {}
+    }
+    @Service()
+    class HandlerService {
+      @Inject(LOGGER)
+      public logger!: Logger;
+    }
+    const handler = Container.of().get(HandlerService);
+    expect(handler.logger).toBeInstanceOf(ConsoleLogger);
+    expect(handler.logger).toBe(Container.of().get(LOGGER));
   });
 });
