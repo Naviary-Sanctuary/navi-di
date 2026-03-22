@@ -46,11 +46,17 @@ No environment variables or external services are required for local development
 
 ## Public entry points
 
-The package root currently exports:
+The package root currently exports runtime values and TypeScript types.
+
+Runtime exports:
 
 - `Container`
 - `Service`
 - `Inject`
+- `Token`
+
+Type-only exports:
+
 - `Constructable` / `AbstractConstructable`
 - `ServiceIdentifier`
 
@@ -126,9 +132,15 @@ Current behavior:
 
 ## Decorators
 
-### `@Service(options?)`
+### `@Service(idOrOptions?)`
 
 Registers a class in the default container.
+
+Accepted forms today:
+
+- `@Service()`
+- `@Service(id)`
+- `@Service({ id, scope })`
 
 Options supported today:
 
@@ -146,7 +158,8 @@ class LoggerService {}
 const logger = Container.of().get('logger');
 ```
 
-Note: a custom string id works for manual resolution through `container.get(...)`, but `@Inject()` currently accepts a constructable class dependency rather than an arbitrary token.
+Custom identifiers work for both `container.get(...)` and `@Inject(...)`.
+When you use `Token` instances, resolution is based on object identity, so create the token once and reuse the same instance everywhere.
 
 ### `@Inject(dependency)`
 
@@ -160,6 +173,35 @@ Current characteristics:
 - multiple decorated fields on the same class are supported;
 - injected fields are defined as writable and configurable own properties on the created instance;
 - injected fields are assigned after construction, so they are not available inside constructors or field initializers.
+
+Token example:
+
+```ts
+import { Container, Inject, Service, Token } from 'navi-di';
+
+interface Logger {
+  log(message: string): void;
+}
+
+const LOGGER = new Token<Logger>('Logger');
+
+@Service(LOGGER)
+class ConsoleLogger implements Logger {
+  public log(message: string) {
+    console.log(message);
+  }
+}
+
+@Service()
+class HandlerService {
+  @Inject(LOGGER)
+  public logger!: Logger;
+}
+
+const handler = Container.of().get(HandlerService);
+
+handler.logger.log('hello from token injection');
+```
 
 ## Container API
 
@@ -192,6 +234,13 @@ Supported strategies:
 - `'service'` removes registrations from the current container.
 
 This is especially useful in tests.
+
+### `container.set(metadata)`
+
+Registers or replaces service metadata for a service identifier.
+
+This is a low-level API that powers manual registration scenarios and internal tests.
+For application-facing code, prefer `@Service()` unless you specifically need to construct metadata yourself.
 
 ## Internal architecture
 
