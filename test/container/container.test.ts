@@ -34,7 +34,7 @@ describe('Container', () => {
 
     class RequestService {}
 
-    Container.of().set({
+    Container.of().register({
       id: RequestService,
       Class: RequestService,
       name: 'RequestService',
@@ -58,7 +58,7 @@ describe('Container', () => {
 
     class SingletonService {}
 
-    requestContainer.set({
+    requestContainer.register({
       id: SingletonService,
       Class: SingletonService,
       name: 'SingletonService',
@@ -75,7 +75,7 @@ describe('Container', () => {
   test('reset value clears cached instances but keeps registrations', () => {
     class ResettableService {}
 
-    Container.of().set({
+    Container.of().register({
       id: ResettableService,
       Class: ResettableService,
       name: 'ResettableService',
@@ -97,7 +97,7 @@ describe('Container', () => {
   test('reset service removes registrations from the current container', () => {
     class ResettableService {}
 
-    Container.of().set({
+    Container.of().register({
       id: ResettableService,
       Class: ResettableService,
       name: 'ResettableService',
@@ -116,7 +116,7 @@ describe('Container', () => {
 
     class ResettableService {}
 
-    Container.of().set({
+    Container.of().register({
       id: ResettableService,
       Class: ResettableService,
       name: 'ResettableService',
@@ -139,7 +139,7 @@ describe('Container', () => {
   test('reset specific container with static method', () => {
     class ResettableService {}
 
-    Container.of('container').set({
+    Container.of('container').register({
       id: ResettableService,
       Class: ResettableService,
       name: 'ResettableService',
@@ -158,7 +158,7 @@ describe('Container', () => {
 
     class ScopedService {}
 
-    Container.of().set({
+    Container.of().register({
       id: ScopedService,
       Class: ScopedService,
       name: 'ScopedService',
@@ -190,7 +190,7 @@ describe('Container', () => {
       public alpha!: AlphaService;
     }
 
-    Container.of().set({
+    Container.of().register({
       id: AlphaService,
       Class: AlphaService,
       name: 'AlphaService',
@@ -199,7 +199,7 @@ describe('Container', () => {
       value: EMPTY_VALUE,
     });
 
-    Container.of().set({
+    Container.of().register({
       id: BetaService,
       Class: BetaService,
       name: 'BetaService',
@@ -224,7 +224,7 @@ describe('Container', () => {
 
     class HealthyService {}
 
-    requestContainer.set({
+    requestContainer.register({
       id: AlphaService,
       Class: AlphaService,
       name: 'AlphaService',
@@ -233,7 +233,7 @@ describe('Container', () => {
       value: EMPTY_VALUE,
     });
 
-    requestContainer.set({
+    requestContainer.register({
       id: BetaService,
       Class: BetaService,
       name: 'BetaService',
@@ -242,7 +242,7 @@ describe('Container', () => {
       value: EMPTY_VALUE,
     });
 
-    requestContainer.set({
+    requestContainer.register({
       id: HealthyService,
       Class: HealthyService,
       name: 'HealthyService',

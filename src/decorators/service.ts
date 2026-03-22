@@ -23,7 +23,7 @@ export function Service<T>(idOrOptions?: ServiceIdentifier | ServiceOption) {
 
     const injections = (context.metadata[INJECTION_KEY] ?? []) as InjectionMetadata[];
 
-    ContainerRegistry.defaultContainer.set({
+    ContainerRegistry.defaultContainer.register({
       id: options?.id ?? target,
       Class: target,
       name: context.name,

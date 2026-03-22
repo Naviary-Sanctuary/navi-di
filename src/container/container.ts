@@ -30,9 +30,9 @@ export class Container {
     return container;
   }
 
-  public set<T>(metadata: Metadata<T>) {
+  public register<T>(metadata: Metadata<T>) {
     if (metadata.scope === 'singleton' && !this.isDefault()) {
-      ContainerRegistry.defaultContainer.set(metadata);
+      ContainerRegistry.defaultContainer.register(metadata);
       this.metadataMap.delete(metadata.id);
       return;
     }
