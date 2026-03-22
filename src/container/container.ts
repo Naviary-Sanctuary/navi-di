@@ -7,6 +7,7 @@ export class Container {
   public readonly id: ContainerIdentifier;
 
   private metadataMap: Map<ServiceIdentifier, Metadata> = new Map();
+  private bindingMap: Map<ServiceIdentifier, unknown> = new Map();
   private resolving = new Set<ServiceIdentifier>();
   private resolvingPath: ServiceIdentifier[] = [];
 
@@ -30,11 +31,11 @@ export class Container {
     return container;
   }
 
-  public set<T>(metadata: Metadata<T>) {
+  public register<T>(metadata: Metadata<T>) {
     if (metadata.scope === 'singleton' && !this.isDefault()) {
-      ContainerRegistry.defaultContainer.set(metadata);
+      ContainerRegistry.defaultContainer.register(metadata);
       this.metadataMap.delete(metadata.id);
-      return;
+      return this;
     }
 
     const newMetadata: Metadata<T> = {
@@ -48,10 +49,23 @@ export class Container {
     } else {
       this.metadataMap.set(newMetadata.id, newMetadata);
     }
+
+    return this;
   }
 
   public has(id: ServiceIdentifier): boolean {
     return this.metadataMap.has(id);
+  }
+
+  public set<T>(id: ServiceIdentifier<T>, value: T) {
+    this.bindingMap.set(id, value);
+    return this;
+  }
+
+  public remove(id: ServiceIdentifier) {
+    this.bindingMap.delete(id);
+    this.metadataMap.delete(id);
+    return this;
   }
 
   public reset(strategy: 'value' | 'service' = 'value') {
@@ -59,12 +73,21 @@ export class Container {
       this.metadataMap.forEach((metadata) => {
         metadata.value = EMPTY_VALUE;
       });
+
+      return this;
     } else {
+      this.bindingMap.clear();
       this.metadataMap.clear();
+
+      return this;
     }
   }
 
   public get<T>(id: ServiceIdentifier<T>): T {
+    if (this.bindingMap.has(id)) {
+      return this.bindingMap.get(id) as T;
+    }
+
     let metadata = this.metadataMap.get(id);
 
     if (!metadata && !this.isDefault()) {
@@ -130,5 +153,11 @@ export class Container {
 
   private isDefault() {
     return this === ContainerRegistry.defaultContainer;
+  }
+
+  public static reset(containerId: ContainerIdentifier, options?: { strategy?: 'value' | 'service' }) {
+    const container = ContainerRegistry.getContainer(containerId);
+
+    container?.reset(options?.strategy);
   }
 }

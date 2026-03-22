@@ -11,31 +11,37 @@ afterEach(() => {
 });
 
 describe('ContainerRegistry', () => {
-  test('throws when registering another container with the same id', () => {
-    Container.of('registry-duplicate');
+  describe('registerContainer', () => {
+    test('throws when registering another container with the same id', () => {
+      Container.of('registry-duplicate');
 
-    expect(() => ContainerRegistry.registerContainer(new Container('registry-duplicate'))).toThrow(
-      ContainerDuplicatedError,
-    );
+      expect(() => ContainerRegistry.registerContainer(new Container('registry-duplicate'))).toThrow(
+        ContainerDuplicatedError,
+      );
+    });
   });
 
-  test('reports named container presence through hasContainer and getContainer', () => {
-    const container = Container.of('registry-visible');
+  describe('hasContainer and getContainer', () => {
+    test('report named container presence', () => {
+      const container = Container.of('registry-visible');
 
-    expect(ContainerRegistry.hasContainer('registry-visible')).toBe(true);
-    expect(ContainerRegistry.getContainer('registry-visible')).toBe(container);
+      expect(ContainerRegistry.hasContainer('registry-visible')).toBe(true);
+      expect(ContainerRegistry.getContainer('registry-visible')).toBe(container);
+    });
   });
 
-  test('removes a named container from the registry', () => {
-    Container.of('registry-removed');
+  describe('removeContainer', () => {
+    test('removes a named container from the registry', () => {
+      Container.of('registry-removed');
 
-    ContainerRegistry.removeContainer('registry-removed');
+      ContainerRegistry.removeContainer('registry-removed');
 
-    expect(ContainerRegistry.hasContainer('registry-removed')).toBe(false);
-    expect(ContainerRegistry.getContainer('registry-removed')).toBeUndefined();
-  });
+      expect(ContainerRegistry.hasContainer('registry-removed')).toBe(false);
+      expect(ContainerRegistry.getContainer('registry-removed')).toBeUndefined();
+    });
 
-  test('throws when removing the default container', () => {
-    expect(() => ContainerRegistry.removeContainer('default')).toThrow(DefaultContainerIdError);
+    test('throws when removing the default container', () => {
+      expect(() => ContainerRegistry.removeContainer('default')).toThrow(DefaultContainerIdError);
+    });
   });
 });
