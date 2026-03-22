@@ -4,19 +4,21 @@ import { CircularDependencyError, ServiceNotFoundError } from '../../src/errors'
 import { ContainerRegistry } from '../../src/container/registry';
 import { EMPTY_VALUE } from '../../src/types';
 
-afterEach(() => {
-  Container.of().reset('service');
-  ContainerRegistry.removeContainer('container-reused');
-  ContainerRegistry.removeContainer('container-first');
-  ContainerRegistry.removeContainer('container-second');
-  ContainerRegistry.removeContainer('container-scope');
-  ContainerRegistry.removeContainer('singleton-forwarded');
-  ContainerRegistry.removeContainer('container-reset-fallback');
-  ContainerRegistry.removeContainer('container-local-has');
-  ContainerRegistry.removeContainer('container-post-error');
-});
-
 describe('Container', () => {
+  afterEach(() => {
+    Container.of().reset('service');
+    ContainerRegistry.removeContainer('container-reused');
+    ContainerRegistry.removeContainer('container-first');
+    ContainerRegistry.removeContainer('container-second');
+    ContainerRegistry.removeContainer('container-scope');
+    ContainerRegistry.removeContainer('container-binding');
+    ContainerRegistry.removeContainer('container-binding-reset');
+    ContainerRegistry.removeContainer('singleton-forwarded');
+    ContainerRegistry.removeContainer('container-reset-fallback');
+    ContainerRegistry.removeContainer('container-local-has');
+    ContainerRegistry.removeContainer('container-post-error');
+  });
+
   test('returns the default container for no id and the default id', () => {
     expect(Container.of()).toBe(Container.of('default'));
   });
@@ -72,6 +74,51 @@ describe('Container', () => {
     expect(requestContainer.get(SingletonService)).toBe(Container.of().get(SingletonService));
   });
 
+  test('returns a bound value set on the current container', () => {
+    class BoundService {}
+
+    const bound = new BoundService();
+
+    Container.of().set(BoundService, bound);
+
+    expect(Container.of().get(BoundService)).toBe(bound);
+  });
+
+  test('prefers a bound value over a registered service in the same container', () => {
+    class BoundService {}
+
+    const bound = new BoundService();
+
+    Container.of().register({
+      id: BoundService,
+      Class: BoundService,
+      name: 'BoundService',
+      injections: [],
+      scope: 'container',
+      value: EMPTY_VALUE,
+    });
+
+    Container.of().set(BoundService, bound);
+
+    expect(Container.of().get(BoundService)).toBe(bound);
+  });
+
+  test('remove clears a bound value from the current container', () => {
+    const requestContainer = Container.of('container-binding');
+
+    class BoundService {}
+
+    const bound = new BoundService();
+
+    requestContainer.set(BoundService, bound);
+
+    expect(requestContainer.get(BoundService)).toBe(bound);
+
+    requestContainer.remove(BoundService);
+
+    expect(() => requestContainer.get(BoundService)).toThrow(ServiceNotFoundError);
+  });
+
   test('reset value clears cached instances but keeps registrations', () => {
     class ResettableService {}
 
@@ -94,6 +141,17 @@ describe('Container', () => {
     expect(afterReset).not.toBe(beforeReset);
   });
 
+  test('reset value keeps bound values intact', () => {
+    class BoundService {}
+
+    const bound = new BoundService();
+
+    Container.of().set(BoundService, bound);
+    Container.of().reset('value');
+
+    expect(Container.of().get(BoundService)).toBe(bound);
+  });
+
   test('reset service removes registrations from the current container', () => {
     class ResettableService {}
 
@@ -109,6 +167,19 @@ describe('Container', () => {
     Container.of().reset('service');
 
     expect(() => Container.of().get(ResettableService)).toThrow(ServiceNotFoundError);
+  });
+
+  test('reset service removes bound values from the current container', () => {
+    const requestContainer = Container.of('container-binding-reset');
+
+    class BoundService {}
+
+    const bound = new BoundService();
+
+    requestContainer.set(BoundService, bound);
+    requestContainer.reset('service');
+
+    expect(() => requestContainer.get(BoundService)).toThrow(ServiceNotFoundError);
   });
 
   test('reset service on a named container clears local copies and falls back to default registrations again', () => {
