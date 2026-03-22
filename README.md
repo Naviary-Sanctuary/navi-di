@@ -242,9 +242,9 @@ What they do:
 - `lint`: run `oxlint` with warnings denied
 - `fmt`: format the repository with `oxfmt`
 - `fmt:check`: verify formatting without writing changes
-- `hooks:*`: install, validate, or run the Lefthook-based Git hooks
+- `hooks:*`: install, validate, or run the repo-local Lefthook Git hooks
 
-`bun install` also triggers `postinstall`, which installs the local Git hooks automatically.
+Git hooks are optional and repo-local. After cloning, contributors can install them with `bun run hooks:install`.
 
 Current note: `typecheck` uses `tsconfig.json` with `noEmit: true`, while `build` uses `tsconfig.build.json` with `noEmit: false` to emit `dist/` and declaration files.
 
@@ -255,7 +255,8 @@ The repository currently enforces:
 - strict TypeScript checking;
 - `oxlint` for linting;
 - `oxfmt` for formatting;
-- Lefthook `pre-commit` checks for staged TypeScript, JavaScript, Markdown, YAML, and YML files.
+- PR CI checks for lint, format, typecheck, tests, and build;
+- optional Lefthook `pre-commit` checks for staged TypeScript, JavaScript, Markdown, YAML, and YML files.
 
 The package `prepack` script runs lint, format check, typecheck, and build before publishing.
 

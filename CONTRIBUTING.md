@@ -17,11 +17,13 @@ This repository is focused on a small, explicit DI core for standard ECMAScript 
 This repository uses Lefthook.
 
 - `pre-commit` runs fast staged-file checks for lint and formatting.
+- hooks are contributor-local and are not installed for package consumers.
 
-If hooks stop working locally, reinstall them with `bun run hooks:install`.
+Install or reinstall them locally with `bun run hooks:install`.
 
 ## Pull request checklist
 
+- PR CI runs lint, format, typecheck, test, and build checks automatically.
 - the change is focused and documented;
 - scripts in the local checks section pass;
 - package exports and Node compatibility were kept intact;

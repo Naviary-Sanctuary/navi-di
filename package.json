@@ -2,6 +2,7 @@
   "name": "navi-di",
   "version": "0.1.0",
   "description": "Dependency injection for standard ECMAScript decorators.",
+  "author": "naviary-sanctuary",
   "keywords": [
     "bun",
     "decorators",
@@ -51,7 +52,6 @@
     "lint": "oxlint . --deny-warnings",
     "fmt": "oxfmt --config .oxfmt.json .",
     "fmt:check": "oxfmt --check --config .oxfmt.json .",
-    "postinstall": "lefthook install",
     "prepack": "bun run lint && bun run fmt:check && bun run typecheck && bun run build",
     "test": "bun test --pass-with-no-tests"
   },
