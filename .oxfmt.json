@@ -8,5 +8,5 @@
   "endOfLine": "lf",
   "bracketSpacing": true,
   "arrowParens": "always",
-  "ignorePatterns": ["dist/**"]
+  "ignorePatterns": ["dist/**", "*.json"]
 }
