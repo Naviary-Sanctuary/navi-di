@@ -1,5 +1,13 @@
 import { CircularDependencyError, ServiceNotFoundError } from '../errors';
-import type { ContainerIdentifier, Metadata, ServiceIdentifier } from '../types';
+import type {
+  ClassProvider,
+  ContainerIdentifier,
+  FactoryProvider,
+  Metadata,
+  ServiceIdentifier,
+  ServiceProvider,
+  ValueProvider,
+} from '../types';
 import { EMPTY_VALUE } from '../types';
 import { ContainerRegistry } from './registry';
 
@@ -25,6 +33,45 @@ export class Container {
 
   constructor(id: ContainerIdentifier) {
     this.id = id;
+  }
+
+  private isValueProvider<T>(provider: T | ServiceProvider<T>): provider is ValueProvider<T> {
+    return typeof provider === 'object' && provider !== null && 'useValue' in provider;
+  }
+
+  private isClassProvider<T>(provider: T | ServiceProvider<T>): provider is ClassProvider<T> {
+    return typeof provider === 'object' && provider !== null && 'useClass' in provider;
+  }
+
+  private isFactoryProvider<T>(provider: T | ServiceProvider<T>): provider is FactoryProvider<T> {
+    return typeof provider === 'object' && provider !== null && 'useFactory' in provider;
+  }
+
+  private getClassProviderMetadata<T>(id: ServiceIdentifier<T>, provider: ClassProvider<T>): Metadata<T> {
+    const existingMetadata =
+      this.metadataMap.get(provider.useClass) ?? ContainerRegistry.defaultContainer.metadataMap.get(provider.useClass);
+    const inheritedInjections = existingMetadata?.Class === provider.useClass ? [...existingMetadata.injections] : [];
+    const inheritedScope = existingMetadata?.Class === provider.useClass ? existingMetadata.scope : 'container';
+
+    return {
+      id,
+      Class: provider.useClass,
+      name: provider.useClass.name || String(id),
+      injections: provider.injections ?? inheritedInjections,
+      scope: provider.scope ?? inheritedScope,
+      value: EMPTY_VALUE,
+    };
+  }
+
+  private getFactoryProviderMetadata<T>(id: ServiceIdentifier<T>, provider: FactoryProvider<T>): Metadata<T> {
+    return {
+      id,
+      name: typeof id === 'function' ? id.name : String(id),
+      injections: [],
+      scope: provider.scope ?? 'container',
+      value: EMPTY_VALUE,
+      factory: provider.useFactory,
+    };
   }
 
   /**
@@ -98,17 +145,36 @@ export class Container {
   }
 
   /**
-   * Binds a concrete value to this container.
+   * Registers a value or provider for a service identifier.
    *
-   * Bound values are returned as-is when the same identifier is requested from
-   * this container.
+   * Use a plain value to bind an explicit instance, or a provider object to
+   * resolve by class or factory.
    *
-   * @param id The service identifier to bind.
-   * @param value The value to return for that identifier.
+   * @param id The service identifier to register.
+   * @param valueOrProvider The bound value or provider definition.
    * @returns The current container.
    */
-  public set<T>(id: ServiceIdentifier<T>, value: T) {
-    this.bindingMap.set(id, value);
+  public set<T>(id: ServiceIdentifier<T>, value: T): this;
+  public set<T>(id: ServiceIdentifier<T>, provider: ServiceProvider<T>): this;
+  public set<T>(id: ServiceIdentifier<T>, valueOrProvider: T | ServiceProvider<T>) {
+    if (this.isValueProvider(valueOrProvider)) {
+      this.bindingMap.set(id, valueOrProvider.useValue);
+      this.metadataMap.delete(id);
+      return this;
+    }
+
+    if (this.isClassProvider(valueOrProvider)) {
+      this.bindingMap.delete(id);
+      return this.register(this.getClassProviderMetadata(id, valueOrProvider));
+    }
+
+    if (this.isFactoryProvider(valueOrProvider)) {
+      this.bindingMap.delete(id);
+      return this.register(this.getFactoryProviderMetadata(id, valueOrProvider));
+    }
+
+    this.bindingMap.set(id, valueOrProvider);
+    this.metadataMap.delete(id);
     return this;
   }
 
@@ -166,10 +232,10 @@ export class Container {
       return this.bindingMap.get(id) as T;
     }
 
-    let metadata = this.metadataMap.get(id);
+    let metadata = this.metadataMap.get(id) as Metadata<T> | undefined;
 
     if (!metadata && !this.isDefault()) {
-      const defaultMetadata = ContainerRegistry.defaultContainer.metadataMap.get(id);
+      const defaultMetadata = ContainerRegistry.defaultContainer.metadataMap.get(id) as Metadata<T> | undefined;
 
       if (!defaultMetadata) {
         throw new ServiceNotFoundError(id);
@@ -208,7 +274,7 @@ export class Container {
     this.resolvingPath.push(id);
 
     try {
-      const instance = new metadata.Class() as T;
+      const instance: T = metadata.factory ? metadata.factory(this) : new metadata.Class!();
 
       for (const injection of metadata.injections) {
         Object.defineProperty(instance, injection.name, {
