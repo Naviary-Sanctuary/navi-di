@@ -235,12 +235,19 @@ Supported strategies:
 
 This is especially useful in tests.
 
-### `container.set(metadata)`
+### `container.set(id, valueOrProvider)`
 
-Registers or replaces service metadata for a service identifier.
+Registers or replaces a bound value or provider for a service identifier.
 
-This is a low-level API that powers manual registration scenarios and internal tests.
-For application-facing code, prefer `@Service()` unless you specifically need to construct metadata yourself.
+Supported forms today:
+
+- `container.set(id, value)`
+- `container.set(id, { useValue: value })`
+- `container.set(id, { useClass: Class, scope? })`
+- `container.set(id, { useFactory: (container) => value, scope? })`
+
+This is the low-level API for manual value, class, and factory registration.
+For decorator-driven classes, prefer `@Service()`.
 
 ## Internal architecture
 

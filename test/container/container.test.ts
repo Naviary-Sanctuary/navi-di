@@ -17,6 +17,8 @@ afterEach(() => {
   ContainerRegistry.removeContainer('container-reset-fallback');
   ContainerRegistry.removeContainer('container-local-has');
   ContainerRegistry.removeContainer('container-post-error');
+  ContainerRegistry.removeContainer('factory-container-scope');
+  ContainerRegistry.removeContainer('factory-singleton-scope');
 });
 
 describe('Container', () => {
@@ -107,6 +109,88 @@ describe('Container', () => {
       Container.of().set(BoundService, bound);
 
       expect(Container.of().get(BoundService)).toBe(bound);
+    });
+
+    test('registers a class provider for a custom identifier', () => {
+      interface Logger {
+        log(message: string): string;
+      }
+
+      class ConsoleLogger implements Logger {
+        public log(message: string) {
+          return message;
+        }
+      }
+
+      Container.of().set<Logger>('logger', { useClass: ConsoleLogger });
+
+      const logger = Container.of().get<Logger>('logger');
+
+      expect(logger).toBeInstanceOf(ConsoleLogger);
+      expect(logger.log('hello')).toBe('hello');
+    });
+
+    test('registers a factory provider that can resolve from the current container', () => {
+      class DependencyService {
+        public readonly name = 'dependency';
+      }
+
+      class CompositeService {
+        constructor(public readonly dependency: DependencyService) {}
+      }
+
+      Container.of().register({
+        id: DependencyService,
+        Class: DependencyService,
+        name: 'DependencyService',
+        injections: [],
+        scope: 'container',
+        value: EMPTY_VALUE,
+      });
+
+      Container.of().set(CompositeService, {
+        useFactory: (container) => new CompositeService(container.get(DependencyService)),
+      });
+
+      const composite = Container.of().get(CompositeService);
+
+      expect(composite).toBeInstanceOf(CompositeService);
+      expect(composite.dependency).toBe(Container.of().get(DependencyService));
+    });
+
+    test('supports container-scoped factory providers per named container', () => {
+      const firstContainer = Container.of('factory-container-scope');
+      let created = 0;
+
+      Container.of().set('request-id', {
+        useFactory: () => ({ id: ++created }),
+        scope: 'container',
+      });
+
+      const defaultFirst = Container.of().get<{ id: number }>('request-id');
+      const defaultSecond = Container.of().get<{ id: number }>('request-id');
+      const namedFirst = firstContainer.get<{ id: number }>('request-id');
+      const namedSecond = firstContainer.get<{ id: number }>('request-id');
+
+      expect(defaultFirst).toBe(defaultSecond);
+      expect(namedFirst).toBe(namedSecond);
+      expect(defaultFirst).not.toBe(namedFirst);
+    });
+
+    test('supports singleton factory providers across containers', () => {
+      const requestContainer = Container.of('factory-singleton-scope');
+      let created = 0;
+
+      Container.of().set('singleton-id', {
+        useFactory: () => ({ id: ++created }),
+        scope: 'singleton',
+      });
+
+      const defaultInstance = Container.of().get<{ id: number }>('singleton-id');
+      const requestInstance = requestContainer.get<{ id: number }>('singleton-id');
+
+      expect(defaultInstance).toBe(requestInstance);
+      expect(created).toBe(1);
     });
   });
 
