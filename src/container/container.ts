@@ -141,7 +141,7 @@ export class Container {
    * @returns `true` when the current container has a local registration.
    */
   public has(id: ServiceIdentifier): boolean {
-    return this.metadataMap.has(id);
+    return this.bindingMap.has(id) || this.metadataMap.has(id);
   }
 
   /**
@@ -235,6 +235,10 @@ export class Container {
     let metadata = this.metadataMap.get(id) as Metadata<T> | undefined;
 
     if (!metadata && !this.isDefault()) {
+      if (ContainerRegistry.defaultContainer.bindingMap.has(id)) {
+        return ContainerRegistry.defaultContainer.bindingMap.get(id) as T;
+      }
+
       const defaultMetadata = ContainerRegistry.defaultContainer.metadataMap.get(id) as Metadata<T> | undefined;
 
       if (!defaultMetadata) {

@@ -111,6 +111,18 @@ describe('Container', () => {
       expect(Container.of().get(BoundService)).toBe(bound);
     });
 
+    test('falls back to a value bound on the default container', () => {
+      const requestContainer = Container.of('container-binding-fallback');
+
+      class BoundService {}
+
+      const bound = new BoundService();
+
+      Container.of().set(BoundService, bound);
+
+      expect(requestContainer.get(BoundService)).toBe(bound);
+    });
+
     test('registers a class provider for a custom identifier', () => {
       interface Logger {
         log(message: string): string;
@@ -191,6 +203,16 @@ describe('Container', () => {
 
       expect(defaultInstance).toBe(requestInstance);
       expect(created).toBe(1);
+    });
+
+    test('reports local bindings through has()', () => {
+      class BoundService {}
+
+      const bound = new BoundService();
+
+      Container.of().set(BoundService, bound);
+
+      expect(Container.of().has(BoundService)).toBe(true);
     });
   });
 
