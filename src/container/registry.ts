@@ -88,4 +88,18 @@ export class ContainerRegistry {
 
     this.containerMap.delete(id);
   }
+
+  public static disposeContainer(container: Container) {
+    if (container.id === 'default') {
+      if (this.defaultContainerInstance === container) {
+        this.defaultContainerInstance = undefined;
+      }
+
+      return;
+    }
+
+    if (this.containerMap.get(container.id) === container) {
+      this.containerMap.delete(container.id);
+    }
+  }
 }
