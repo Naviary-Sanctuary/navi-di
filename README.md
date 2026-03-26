@@ -212,6 +212,9 @@ handler.logger.log('hello from token injection');
 
 Returns the default container or a named container.
 
+Calling `Container.of(id)` with the same identifier reuses the same container
+instance until that instance is disposed.
+
 ### `container.get(id)`
 
 Resolves a service by class or service identifier.
@@ -220,6 +223,15 @@ Throws:
 
 - `ServiceNotFoundError` when no registration exists;
 - `CircularDependencyError` when the current resolution path loops back to an in-progress dependency.
+
+### `container.tryGet(id)`
+
+Resolves a service by class or service identifier and returns `undefined` when
+no registration exists.
+
+Unlike `get()`, this only returns `undefined` when the requested identifier is
+not registered anywhere in the current resolution path. Other failures, such as
+circular dependencies or missing nested dependencies, still throw.
 
 ### `container.has(id)`
 
@@ -237,6 +249,19 @@ Supported strategies:
 - `'service'` removes registrations from the current container.
 
 This is especially useful in tests.
+
+### `await container.dispose()`
+
+Disposes the current container instance explicitly.
+
+- clears local registrations, bindings, and cached service instances;
+- awaits any bound value or cached service instance that exposes a `dispose()` method;
+- makes the disposed container instance unusable for future operations.
+
+After disposal, calling `Container.of(id)` again creates a fresh container for
+that identifier. The same applies to the default container: after disposal, the
+next `Container.of()` or named-container fallback access recreates a fresh
+default container with no previous registrations or cached instances.
 
 ### `container.set(id, valueOrProvider)`
 
