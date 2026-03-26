@@ -55,6 +55,9 @@ Runtime exports:
 - `Inject`
 - `Token`
 
+`Container` exposes the runtime API for resolution and low-level registration,
+including `of()`, `get()`, `set()`, `has()`, `remove()`, and `reset()`.
+
 Type-only exports:
 
 - `Constructable` / `AbstractConstructable`
@@ -239,15 +242,63 @@ This is especially useful in tests.
 
 Registers or replaces a bound value or provider for a service identifier.
 
+Use `set()` when you want manual registration without decorating a class.
+This is the supported low-level API for values, classes, and factories.
+
 Supported forms today:
 
 - `container.set(id, value)`
 - `container.set(id, { useValue: value })`
-- `container.set(id, { useClass: Class, scope? })`
+- `container.set(id, { useClass: Class, scope?, injections? })`
 - `container.set(id, { useFactory: (container) => value, scope? })`
 
 This is the low-level API for manual value, class, and factory registration.
 For decorator-driven classes, prefer `@Service()`.
+
+Value example:
+
+```ts
+const REQUEST_ID = 'request-id';
+
+Container.of().set(REQUEST_ID, { useValue: crypto.randomUUID() });
+
+const requestId = Container.of().get<string>(REQUEST_ID);
+```
+
+Class example:
+
+```ts
+interface Logger {
+  log(message: string): void;
+}
+
+class ConsoleLogger implements Logger {
+  public log(message: string) {
+    console.log(message);
+  }
+}
+
+Container.of().set<Logger>('logger', { useClass: ConsoleLogger, scope: 'singleton' });
+```
+
+Factory example:
+
+```ts
+class Connection {
+  constructor(public readonly requestId: string) {}
+}
+
+Container.of().set('request-id', { useValue: 'request-1' });
+Container.of().set(Connection, {
+  useFactory: (container) => new Connection(container.get('request-id')),
+  scope: 'container',
+});
+```
+
+For named containers, values bound in the default container are available through
+fallback. Provider objects are detected structurally, so plain object values that
+contain `useValue`, `useClass`, or `useFactory` should be wrapped with
+`{ useValue: value }` if you want them treated as values.
 
 ## Internal architecture
 
