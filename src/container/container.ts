@@ -1,4 +1,4 @@
-import { CircularDependencyError, ServiceNotFoundError } from '../errors';
+import { CircularDependencyError, ContainerDisposedError, ServiceNotFoundError } from '../errors';
 import type {
   ClassProvider,
   ContainerIdentifier,
@@ -30,9 +30,36 @@ export class Container {
   private bindingMap: Map<ServiceIdentifier, unknown> = new Map();
   private resolving = new Set<ServiceIdentifier>();
   private resolvingPath: ServiceIdentifier[] = [];
+  private disposed = false;
 
   constructor(id: ContainerIdentifier) {
     this.id = id;
+  }
+
+  private ensureNotDisposed() {
+    if (this.disposed) {
+      throw new ContainerDisposedError(this.id);
+    }
+  }
+
+  private isDisposable(value: unknown): value is { dispose: () => void | Promise<void> } {
+    return typeof value === 'object' && value !== null && 'dispose' in value && typeof value.dispose === 'function';
+  }
+
+  private canResolveLocally(id: ServiceIdentifier): boolean {
+    return this.bindingMap.has(id) || this.metadataMap.has(id);
+  }
+
+  private canResolve(id: ServiceIdentifier): boolean {
+    if (this.canResolveLocally(id)) {
+      return true;
+    }
+
+    if (this.isDefault()) {
+      return false;
+    }
+
+    return ContainerRegistry.defaultContainer.canResolveLocally(id);
   }
 
   private isValueProvider<T>(provider: T | ServiceProvider<T>): provider is ValueProvider<T> {
@@ -77,8 +104,8 @@ export class Container {
   /**
    * Returns the default container or a named container.
    *
-   * Calling this method with the same identifier always returns the same
-   * container instance.
+   * Calling this method with the same identifier returns the same container
+   * instance until that instance is disposed.
    *
    * @param id The container identifier. Omit this to use the default container.
    * @returns The matching container instance.
@@ -110,6 +137,8 @@ export class Container {
    * @returns The current container.
    */
   public register<T>(metadata: Metadata<T>) {
+    this.ensureNotDisposed();
+
     if (metadata.scope === 'singleton' && !this.isDefault()) {
       ContainerRegistry.defaultContainer.register(metadata);
       this.metadataMap.delete(metadata.id);
@@ -141,6 +170,7 @@ export class Container {
    * @returns `true` when the current container has a local registration.
    */
   public has(id: ServiceIdentifier): boolean {
+    this.ensureNotDisposed();
     return this.bindingMap.has(id) || this.metadataMap.has(id);
   }
 
@@ -157,6 +187,8 @@ export class Container {
   public set<T>(id: ServiceIdentifier<T>, value: T): this;
   public set<T>(id: ServiceIdentifier<T>, provider: ServiceProvider<T>): this;
   public set<T>(id: ServiceIdentifier<T>, valueOrProvider: T | ServiceProvider<T>) {
+    this.ensureNotDisposed();
+
     if (this.isValueProvider(valueOrProvider)) {
       this.bindingMap.set(id, valueOrProvider.useValue);
       this.metadataMap.delete(id);
@@ -185,6 +217,7 @@ export class Container {
    * @returns The current container.
    */
   public remove(id: ServiceIdentifier) {
+    this.ensureNotDisposed();
     this.bindingMap.delete(id);
     this.metadataMap.delete(id);
     return this;
@@ -200,6 +233,8 @@ export class Container {
    * @returns The current container.
    */
   public reset(strategy: 'value' | 'service' = 'value') {
+    this.ensureNotDisposed();
+
     if (strategy === 'value') {
       this.metadataMap.forEach((metadata) => {
         metadata.value = EMPTY_VALUE;
@@ -228,6 +263,8 @@ export class Container {
    * @throws {CircularDependencyError} If the dependency graph contains a cycle.
    */
   public get<T>(id: ServiceIdentifier<T>): T {
+    this.ensureNotDisposed();
+
     if (this.bindingMap.has(id)) {
       return this.bindingMap.get(id) as T;
     }
@@ -296,6 +333,63 @@ export class Container {
     } finally {
       this.resolving.delete(id);
       this.resolvingPath.pop();
+    }
+  }
+
+  /**
+   * Resolves a service if it exists, otherwise returns `undefined`.
+   *
+   * Unlike `get()`, this only suppresses `ServiceNotFoundError`. Other errors,
+   * such as circular dependencies or disposed-container access, still surface.
+   *
+   * @param id The service identifier to resolve.
+   * @returns The resolved value, or `undefined` when the service is missing.
+   */
+  public tryGet<T>(id: ServiceIdentifier<T>): T | undefined {
+    this.ensureNotDisposed();
+
+    if (!this.canResolve(id)) {
+      return undefined;
+    }
+
+    return this.get(id);
+  }
+
+  /**
+   * Disposes this container instance and clears all local registrations.
+   *
+   * The container becomes unusable after disposal. Cached service instances and
+   * bound values that expose an async or sync `dispose()` method are awaited in
+   * the order they were discovered.
+   */
+  public async dispose(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    const ownedValues = new Set<unknown>();
+
+    this.bindingMap.forEach((value) => {
+      ownedValues.add(value);
+    });
+
+    this.metadataMap.forEach((metadata) => {
+      if (metadata.value !== EMPTY_VALUE) {
+        ownedValues.add(metadata.value);
+      }
+    });
+
+    this.disposed = true;
+    ContainerRegistry.disposeContainer(this);
+    this.bindingMap.clear();
+    this.metadataMap.clear();
+    this.resolving.clear();
+    this.resolvingPath = [];
+
+    for (const value of ownedValues) {
+      if (this.isDisposable(value)) {
+        await value.dispose();
+      }
     }
   }
 

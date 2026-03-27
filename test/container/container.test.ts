@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Container } from '../../src';
-import { CircularDependencyError, ServiceNotFoundError } from '../../src/errors';
+import { CircularDependencyError, ContainerDisposedError, ServiceNotFoundError } from '../../src/errors';
 import { ContainerRegistry } from '../../src/container/registry';
 import { EMPTY_VALUE } from '../../src/types';
 
@@ -19,6 +19,9 @@ afterEach(() => {
   ContainerRegistry.removeContainer('container-post-error');
   ContainerRegistry.removeContainer('factory-container-scope');
   ContainerRegistry.removeContainer('factory-singleton-scope');
+  ContainerRegistry.removeContainer('container-try-get');
+  ContainerRegistry.removeContainer('container-dispose');
+  ContainerRegistry.removeContainer('container-dispose-recreate');
 });
 
 describe('Container', () => {
@@ -450,6 +453,180 @@ describe('Container', () => {
 
       expect(() => requestContainer.get(AlphaService)).toThrow(CircularDependencyError);
       expect(requestContainer.get(HealthyService)).toBeInstanceOf(HealthyService);
+    });
+  });
+
+  describe('tryGet', () => {
+    test('returns undefined when a service is missing', () => {
+      class MissingService {}
+
+      expect(Container.of().tryGet(MissingService)).toBeUndefined();
+    });
+
+    test('returns undefined when a named container has no local or fallback registration', () => {
+      expect(Container.of('container-try-get').tryGet('missing')).toBeUndefined();
+    });
+
+    test('returns a resolved service when one exists', () => {
+      const requestContainer = Container.of('container-try-get');
+
+      class ExistingService {}
+
+      requestContainer.register({
+        id: ExistingService,
+        Class: ExistingService,
+        name: 'ExistingService',
+        injections: [],
+        scope: 'container',
+        value: EMPTY_VALUE,
+      });
+
+      expect(requestContainer.tryGet(ExistingService)).toBeInstanceOf(ExistingService);
+    });
+
+    test('resolves default-container bindings through named-container fallback', () => {
+      const requestContainer = Container.of('container-try-get');
+
+      class ExistingService {}
+
+      const bound = new ExistingService();
+
+      Container.of().set(ExistingService, bound);
+
+      expect(requestContainer.tryGet(ExistingService)).toBe(bound);
+    });
+
+    test('does not swallow missing nested dependencies', () => {
+      class MissingDependency {}
+
+      class ExistingService {
+        public dependency!: MissingDependency;
+      }
+
+      Container.of('container-try-get').register({
+        id: ExistingService,
+        Class: ExistingService,
+        name: 'ExistingService',
+        injections: [{ id: MissingDependency, name: 'dependency' }],
+        scope: 'container',
+        value: EMPTY_VALUE,
+      });
+
+      expect(() => Container.of('container-try-get').tryGet(ExistingService)).toThrow(ServiceNotFoundError);
+    });
+
+    test('does not swallow circular dependency errors', () => {
+      class AlphaService {
+        public beta!: BetaService;
+      }
+
+      class BetaService {
+        public alpha!: AlphaService;
+      }
+
+      Container.of('container-try-get').register({
+        id: AlphaService,
+        Class: AlphaService,
+        name: 'AlphaService',
+        injections: [{ id: BetaService, name: 'beta' }],
+        scope: 'container',
+        value: EMPTY_VALUE,
+      });
+
+      Container.of('container-try-get').register({
+        id: BetaService,
+        Class: BetaService,
+        name: 'BetaService',
+        injections: [{ id: AlphaService, name: 'alpha' }],
+        scope: 'container',
+        value: EMPTY_VALUE,
+      });
+
+      expect(() => Container.of('container-try-get').tryGet(AlphaService)).toThrow(CircularDependencyError);
+    });
+  });
+
+  describe('dispose', () => {
+    test('awaits disposal of cached services and bound values, then makes the container unusable', async () => {
+      const requestContainer = Container.of('container-dispose');
+      const events: string[] = [];
+
+      class DisposableBinding {
+        public async dispose() {
+          events.push('binding');
+        }
+      }
+
+      class DisposableService {
+        public async dispose() {
+          events.push('service');
+        }
+      }
+
+      requestContainer.register({
+        id: DisposableService,
+        Class: DisposableService,
+        name: 'DisposableService',
+        injections: [],
+        scope: 'container',
+        value: EMPTY_VALUE,
+      });
+
+      requestContainer.set(DisposableBinding, new DisposableBinding());
+      requestContainer.get(DisposableService);
+
+      await requestContainer.dispose();
+
+      expect(events).toEqual(['binding', 'service']);
+      expect(() => requestContainer.get(DisposableService)).toThrow(ContainerDisposedError);
+      expect(() => requestContainer.tryGet(DisposableService)).toThrow(ContainerDisposedError);
+      expect(() => requestContainer.set('value', 1)).toThrow(ContainerDisposedError);
+      expect(() => requestContainer.has(DisposableBinding)).toThrow(ContainerDisposedError);
+    });
+
+    test('detaches disposed containers so the same id can be recreated later', async () => {
+      const first = Container.of('container-dispose-recreate');
+
+      await first.dispose();
+
+      const recreated = Container.of('container-dispose-recreate');
+
+      expect(recreated).not.toBe(first);
+      expect(() => first.get('missing')).toThrow(ContainerDisposedError);
+      expect(recreated.tryGet('missing')).toBeUndefined();
+    });
+
+    test('is idempotent', async () => {
+      const requestContainer = Container.of('container-dispose');
+
+      await requestContainer.dispose();
+      await expect(requestContainer.dispose()).resolves.toBeUndefined();
+    });
+
+    test('recreates the default container after disposal', async () => {
+      const first = Container.of();
+
+      class DisposableService {
+        public dispose() {}
+      }
+
+      first.register({
+        id: DisposableService,
+        Class: DisposableService,
+        name: 'DisposableService',
+        injections: [],
+        scope: 'container',
+        value: EMPTY_VALUE,
+      });
+
+      first.get(DisposableService);
+      await first.dispose();
+
+      const recreated = Container.of();
+
+      expect(recreated).not.toBe(first);
+      expect(() => first.get(DisposableService)).toThrow(ContainerDisposedError);
+      expect(recreated.tryGet(DisposableService)).toBeUndefined();
     });
   });
 });
