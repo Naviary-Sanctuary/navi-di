@@ -1,5 +1,5 @@
 export { Container } from './container';
-export { Service, Inject } from './decorators';
+export { Service, Inject, InjectMany } from './decorators';
 export { Token } from './tokens';
 
 export type { AbstractConstructable, Constructable } from './types/constructable.ts';
