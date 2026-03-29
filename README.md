@@ -17,7 +17,9 @@ The current implementation focuses on a compact core:
 
 - `@Service()` registers classes in the default container.
 - `@Inject()` wires decorated class fields from the active container.
+- `@InjectMany()` wires all matching bindings into a decorated class field.
 - `Container.of()` resolves services from the default container or from named containers.
+- `container.ofChild()` creates hierarchical child containers.
 - `singleton`, `container`, and `transient` scopes control instance lifetime.
 - Circular graphs and missing services fail with explicit runtime errors.
 
@@ -27,11 +29,15 @@ The repository is no longer just scaffolding. The source and tests currently cov
 
 - class registration through `@Service()`;
 - field injection through `@Inject()`;
+- multi-field injection through `@InjectMany()`;
 - named containers via `Container.of(id)`;
-- default-container fallback for named containers;
+- hierarchical child containers via `container.ofChild(id)` and `Container.ofChild(id, parent)`;
+- ancestor lookup across container hierarchies;
 - per-container caching for `container` scope;
 - shared instances for `singleton` scope;
 - fresh instances for `transient` scope;
+- multi-binding registration through `container.add()` and `@Service({ multiple: true })`;
+- multi-binding resolution through `container.getMany()`;
 - cache reset and registration reset through `container.reset()`;
 - error handling for circular dependencies, missing services, and invalid container operations.
 
@@ -53,10 +59,11 @@ Runtime exports:
 - `Container`
 - `Service`
 - `Inject`
+- `InjectMany`
 - `Token`
 
 `Container` exposes the runtime API for resolution and low-level registration,
-including `of()`, `get()`, `set()`, `has()`, `remove()`, and `reset()`.
+including `of()`, `ofChild()`, `get()`, `getMany()`, `set()`, `add()`, `has()`, `remove()`, and `reset()`.
 
 Type-only exports:
 
@@ -102,8 +109,8 @@ How resolution works:
 The default scope. One instance is cached per container.
 
 - repeated `get()` calls in the same container reuse the same instance;
-- named containers receive their own isolated instance;
-- named containers lazily clone container-scoped registrations from the default container on first access.
+- child containers receive their own isolated instance;
+- child containers lazily clone ancestor registrations on first access.
 
 ### `singleton`
 
@@ -116,22 +123,28 @@ One shared instance across all containers.
 
 A new instance is created on every `get()` call.
 
-## Named containers
+## Hierarchical containers
 
-Use named containers when you want isolated request, job, or unit-of-work state.
+Use containers when you want isolated request, job, or unit-of-work state.
 
 ```ts
 const requestA = Container.of('request-a');
 const requestB = Container.of('request-b');
+
+const tenant = Container.of('tenant-a');
+const request = tenant.ofChild('tenant-a-request');
 ```
 
 Current behavior:
 
 - `Container.of()` and `Container.of('default')` return the same default container;
 - `Container.of('name')` reuses the same named container for the same id;
-- named containers fall back to registrations stored in the default container;
-- `container` scope becomes container-local after first resolution in a named container;
-- `singleton` scope stays shared across the whole registry.
+- `Container.of('name')` creates a child of the default container when the container does not exist yet;
+- `Container.ofChild(id, parent)` and `parent.ofChild(id)` create deeper hierarchies;
+- containers resolve single bindings from the nearest ancestor that owns them;
+- `container` scope becomes container-local after first resolution in a descendant container;
+- `singleton` scope stays shared from the root container;
+- disposing a parent container also disposes its descendants.
 
 ## Decorators
 
@@ -149,6 +162,7 @@ Options supported today:
 
 - `id?: ServiceIdentifier`
 - `scope?: 'singleton' | 'container' | 'transient'`
+- `multiple?: boolean`
 
 Example with a custom id:
 
@@ -176,6 +190,16 @@ Current characteristics:
 - multiple decorated fields on the same class are supported;
 - injected fields are defined as writable and configurable own properties on the created instance;
 - injected fields are assigned after construction, so they are not available inside constructors or field initializers.
+
+### `@InjectMany(dependency)`
+
+Marks a decorated class field for multi-binding injection.
+
+Current characteristics:
+
+- resolves every matching multi-binding for the identifier;
+- returns values in ancestor-first, local-last order;
+- uses the same active container as the service being created.
 
 Token example:
 
@@ -215,6 +239,15 @@ Returns the default container or a named container.
 Calling `Container.of(id)` with the same identifier reuses the same container
 instance until that instance is disposed.
 
+When a named container is first created through `Container.of(id)`, its parent is
+the default container.
+
+### `Container.ofChild(id, parent?)`
+
+Creates or reuses a child container under the provided parent container.
+
+You can also call `parent.ofChild(id)` from an existing container instance.
+
 ### `container.get(id)`
 
 Resolves a service by class or service identifier.
@@ -223,6 +256,15 @@ Throws:
 
 - `ServiceNotFoundError` when no registration exists;
 - `CircularDependencyError` when the current resolution path loops back to an in-progress dependency.
+
+### `container.getMany(id)`
+
+Resolves all multi-bindings registered for a service identifier.
+
+- multi-bindings are aggregated from the root of the hierarchy down to the current container;
+- container-scoped registrations are cached per resolving container;
+- singleton registrations are shared from the root container;
+- returns an empty array when no multi-binding exists.
 
 ### `container.tryGet(id)`
 
@@ -279,6 +321,13 @@ Supported forms today:
 
 This is the low-level API for manual value, class, and factory registration.
 For decorator-driven classes, prefer `@Service()`.
+
+### `container.add(id, valueOrProvider)`
+
+Appends a value or provider to a multi-binding group.
+
+Supported forms are the same as `container.set(...)`, but registrations are
+collected instead of replaced.
 
 Value example:
 
