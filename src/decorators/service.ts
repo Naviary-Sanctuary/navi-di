@@ -41,6 +41,7 @@ export function Service<T>(idOrOptions?: ServiceIdentifier | ServiceOption) {
       injections,
       scope: options?.scope ?? 'container',
       value: EMPTY_VALUE,
+      multiple: options?.multiple,
     });
   };
 }
