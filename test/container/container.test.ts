@@ -4,24 +4,42 @@ import { CircularDependencyError, ContainerDisposedError, ServiceNotFoundError }
 import { ContainerRegistry } from '../../src/container/registry';
 import { EMPTY_VALUE } from '../../src/types';
 
+const CONTAINER_IDS = [
+  'container',
+  'container-reused',
+  'container-first',
+  'container-second',
+  'container-scope',
+  'container-binding',
+  'container-binding-reset',
+  'singleton-forwarded',
+  'container-reset-fallback',
+  'container-local-has',
+  'container-post-error',
+  'factory-container-scope',
+  'factory-singleton-scope',
+  'container-try-get',
+  'container-dispose',
+  'container-dispose-recreate',
+  'container-binding-fallback',
+  'hierarchy-parent',
+  'hierarchy-child',
+  'hierarchy-grandchild',
+  'hierarchy-sibling',
+  'hierarchy-dispose-parent',
+  'hierarchy-dispose-child',
+  'multi-child',
+  'multi-parent',
+] as const;
+
 afterEach(() => {
   Container.of().reset('service');
-  ContainerRegistry.removeContainer('container');
-  ContainerRegistry.removeContainer('container-reused');
-  ContainerRegistry.removeContainer('container-first');
-  ContainerRegistry.removeContainer('container-second');
-  ContainerRegistry.removeContainer('container-scope');
-  ContainerRegistry.removeContainer('container-binding');
-  ContainerRegistry.removeContainer('container-binding-reset');
-  ContainerRegistry.removeContainer('singleton-forwarded');
-  ContainerRegistry.removeContainer('container-reset-fallback');
-  ContainerRegistry.removeContainer('container-local-has');
-  ContainerRegistry.removeContainer('container-post-error');
-  ContainerRegistry.removeContainer('factory-container-scope');
-  ContainerRegistry.removeContainer('factory-singleton-scope');
-  ContainerRegistry.removeContainer('container-try-get');
-  ContainerRegistry.removeContainer('container-dispose');
-  ContainerRegistry.removeContainer('container-dispose-recreate');
+
+  for (const id of CONTAINER_IDS) {
+    if (ContainerRegistry.hasContainer(id)) {
+      ContainerRegistry.removeContainer(id);
+    }
+  }
 });
 
 describe('Container', () => {
@@ -36,6 +54,31 @@ describe('Container', () => {
 
     test('creates distinct named containers for different ids', () => {
       expect(Container.of('container-first')).not.toBe(Container.of('container-second'));
+    });
+  });
+
+  describe('ofChild', () => {
+    test('creates hierarchical child containers under a custom parent', () => {
+      const parent = Container.of('hierarchy-parent');
+      const child = parent.ofChild('hierarchy-child');
+      const grandchild = child.ofChild('hierarchy-grandchild');
+
+      parent.set('config', { name: 'parent' });
+
+      expect(child.parent).toBe(parent);
+      expect(grandchild.parent).toBe(child);
+      expect(child.get<{ name: string }>('config')).toEqual({ name: 'parent' });
+      expect(grandchild.get<{ name: string }>('config')).toEqual({ name: 'parent' });
+    });
+
+    test('prefers the nearest ancestor registration in the hierarchy', () => {
+      const parent = Container.of('hierarchy-parent');
+      const child = parent.ofChild('hierarchy-child');
+
+      Container.of().set('level', 'root');
+      parent.set('level', 'parent');
+
+      expect(child.get<string>('level')).toBe('parent');
     });
   });
 
@@ -216,6 +259,73 @@ describe('Container', () => {
       Container.of().set(BoundService, bound);
 
       expect(Container.of().has(BoundService)).toBe(true);
+    });
+  });
+
+  describe('add and getMany', () => {
+    test('returns all locally added multi-bindings in insertion order', () => {
+      Container.of().add('logger', { useValue: 'console' });
+      Container.of().add('logger', { useValue: 'file' });
+
+      expect(Container.of().getMany('logger')).toEqual(['console', 'file']);
+    });
+
+    test('aggregates multi-bindings from ancestors before local bindings', () => {
+      const parent = Container.of('multi-parent');
+      const child = parent.ofChild('multi-child');
+
+      parent.add('logger', { useValue: 'parent' });
+      child.add('logger', { useValue: 'child' });
+
+      expect(child.getMany('logger')).toEqual(['parent', 'child']);
+    });
+
+    test('creates container-scoped multi-bindings per container', () => {
+      const child = Container.of('multi-parent').ofChild('multi-child');
+      let created = 0;
+
+      Container.of().add('request', {
+        useFactory: () => ({ id: ++created }),
+        scope: 'container',
+      });
+
+      const defaultFirst = Container.of().getMany<{ id: number }>('request')[0];
+      const defaultSecond = Container.of().getMany<{ id: number }>('request')[0];
+      const childFirst = child.getMany<{ id: number }>('request')[0];
+      const childSecond = child.getMany<{ id: number }>('request')[0];
+
+      expect(defaultFirst).toBe(defaultSecond);
+      expect(childFirst).toBe(childSecond);
+      expect(defaultFirst).not.toBe(childFirst);
+    });
+
+    test('shares singleton multi-bindings across the hierarchy', () => {
+      const child = Container.of('multi-parent').ofChild('multi-child');
+      let created = 0;
+
+      child.add('singleton-logger', {
+        useFactory: () => ({ id: ++created }),
+        scope: 'singleton',
+      });
+
+      const rootValue = Container.of().getMany<{ id: number }>('singleton-logger')[0];
+      const childValue = child.getMany<{ id: number }>('singleton-logger')[0];
+
+      expect(rootValue).toBe(childValue);
+      expect(created).toBe(1);
+    });
+
+    test('returns an empty array when no multi-binding exists', () => {
+      expect(Container.of().getMany('missing')).toEqual([]);
+    });
+
+    test('remove clears local multi-bindings', () => {
+      Container.of().add('logger', { useValue: 'console' });
+      Container.of().add('logger', { useValue: 'file' });
+
+      Container.of().remove('logger');
+
+      expect(Container.of().getMany('logger')).toEqual([]);
     });
   });
 
@@ -627,6 +737,18 @@ describe('Container', () => {
       expect(recreated).not.toBe(first);
       expect(() => first.get(DisposableService)).toThrow(ContainerDisposedError);
       expect(recreated.tryGet(DisposableService)).toBeUndefined();
+    });
+
+    test('disposes descendant containers when a parent is disposed', async () => {
+      const parent = Container.of('hierarchy-dispose-parent');
+      const child = parent.ofChild('hierarchy-dispose-child');
+
+      parent.set('value', 1);
+
+      await parent.dispose();
+
+      expect(() => child.get('value')).toThrow(ContainerDisposedError);
+      expect(() => parent.get('value')).toThrow(ContainerDisposedError);
     });
   });
 });

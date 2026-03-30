@@ -3,6 +3,7 @@ import type {
   ClassProvider,
   ContainerIdentifier,
   FactoryProvider,
+  InjectionMetadata,
   Metadata,
   ServiceIdentifier,
   ServiceProvider,
@@ -11,29 +12,37 @@ import type {
 import { EMPTY_VALUE } from '../types';
 import { ContainerRegistry } from './registry';
 
-/**
- * Resolves services and stores container-local bindings.
- *
- * Containers let you resolve registered services, override values for the
- * current context, and isolate container-scoped services by container.
- */
 export class Container {
-  /**
-   * The identifier of this container.
-   *
-   * The default container uses `'default'`, and named containers use the
-   * identifier they were created with.
-   */
   public readonly id: ContainerIdentifier;
 
+  private parentContainer?: Container;
+
+  private readonly children = new Set<Container>();
+
   private metadataMap: Map<ServiceIdentifier, Metadata> = new Map();
+
   private bindingMap: Map<ServiceIdentifier, unknown> = new Map();
-  private resolving = new Set<ServiceIdentifier>();
+
+  private multiMetadataMap: Map<ServiceIdentifier, Metadata[]> = new Map();
+
+  private multiBindingMap: Map<ServiceIdentifier, unknown[]> = new Map();
+
+  private inheritedMultiMetadataMap: Map<ServiceIdentifier, Map<Metadata, Metadata>> = new Map();
+
+  private resolving = new Set<Metadata>();
+
   private resolvingPath: ServiceIdentifier[] = [];
+
   private disposed = false;
 
-  constructor(id: ContainerIdentifier) {
+  constructor(id: ContainerIdentifier, parent?: Container) {
     this.id = id;
+    this.parentContainer = parent;
+    parent?.children.add(this);
+  }
+
+  public get parent(): Container | undefined {
+    return this.parentContainer;
   }
 
   private ensureNotDisposed() {
@@ -44,22 +53,6 @@ export class Container {
 
   private isDisposable(value: unknown): value is { dispose: () => void | Promise<void> } {
     return typeof value === 'object' && value !== null && 'dispose' in value && typeof value.dispose === 'function';
-  }
-
-  private canResolveLocally(id: ServiceIdentifier): boolean {
-    return this.bindingMap.has(id) || this.metadataMap.has(id);
-  }
-
-  private canResolve(id: ServiceIdentifier): boolean {
-    if (this.canResolveLocally(id)) {
-      return true;
-    }
-
-    if (this.isDefault()) {
-      return false;
-    }
-
-    return ContainerRegistry.defaultContainer.canResolveLocally(id);
   }
 
   private isValueProvider<T>(provider: T | ServiceProvider<T>): provider is ValueProvider<T> {
@@ -74,9 +67,54 @@ export class Container {
     return typeof provider === 'object' && provider !== null && 'useFactory' in provider;
   }
 
-  private getClassProviderMetadata<T>(id: ServiceIdentifier<T>, provider: ClassProvider<T>): Metadata<T> {
-    const existingMetadata =
-      this.metadataMap.get(provider.useClass) ?? ContainerRegistry.defaultContainer.metadataMap.get(provider.useClass);
+  private isRoot() {
+    return this.parentContainer === undefined;
+  }
+
+  private getRoot(): Container {
+    return this.parentContainer?.getRoot() ?? this;
+  }
+
+  private getLineage(): Container[] {
+    return this.parentContainer ? [...this.parentContainer.getLineage(), this] : [this];
+  }
+
+  private cloneMetadata<T>(metadata: Metadata<T>): Metadata<T> {
+    return {
+      ...metadata,
+      injections: [...metadata.injections],
+      value: EMPTY_VALUE,
+    };
+  }
+
+  private findBindingOwner(id: ServiceIdentifier): Container | undefined {
+    if (this.bindingMap.has(id)) {
+      return this;
+    }
+
+    return this.parentContainer?.findBindingOwner(id);
+  }
+
+  private findMetadataOwner(id: ServiceIdentifier): Container | undefined {
+    if (this.metadataMap.has(id)) {
+      return this;
+    }
+
+    return this.parentContainer?.findMetadataOwner(id);
+  }
+
+  private canResolve(id: ServiceIdentifier): boolean {
+    return this.findBindingOwner(id) !== undefined || this.findMetadataOwner(id) !== undefined;
+  }
+
+  private getClassProviderMetadata<T>(
+    id: ServiceIdentifier<T>,
+    provider: ClassProvider<T>,
+    multiple = false,
+  ): Metadata<T> {
+    const existingMetadata = this.findMetadataOwner(provider.useClass)?.metadataMap.get(provider.useClass) as
+      | Metadata<T>
+      | undefined;
     const inheritedInjections = existingMetadata?.Class === provider.useClass ? [...existingMetadata.injections] : [];
     const inheritedScope = existingMetadata?.Class === provider.useClass ? existingMetadata.scope : 'container';
 
@@ -87,10 +125,15 @@ export class Container {
       injections: provider.injections ?? inheritedInjections,
       scope: provider.scope ?? inheritedScope,
       value: EMPTY_VALUE,
+      multiple,
     };
   }
 
-  private getFactoryProviderMetadata<T>(id: ServiceIdentifier<T>, provider: FactoryProvider<T>): Metadata<T> {
+  private getFactoryProviderMetadata<T>(
+    id: ServiceIdentifier<T>,
+    provider: FactoryProvider<T>,
+    multiple = false,
+  ): Metadata<T> {
     return {
       id,
       name: typeof id === 'function' ? id.name : String(id),
@@ -98,18 +141,150 @@ export class Container {
       scope: provider.scope ?? 'container',
       value: EMPTY_VALUE,
       factory: provider.useFactory,
+      multiple,
     };
   }
 
-  /**
-   * Returns the default container or a named container.
-   *
-   * Calling this method with the same identifier returns the same container
-   * instance until that instance is disposed.
-   *
-   * @param id The container identifier. Omit this to use the default container.
-   * @returns The matching container instance.
-   */
+  private pushMultiBinding<T>(id: ServiceIdentifier<T>, value: T) {
+    const bindings = this.multiBindingMap.get(id) ?? [];
+
+    bindings.push(value);
+    this.multiBindingMap.set(id, bindings);
+  }
+
+  private pushMultiMetadata<T>(id: ServiceIdentifier<T>, metadata: Metadata<T>) {
+    const registrations = this.multiMetadataMap.get(id) ?? [];
+
+    registrations.push(metadata);
+    this.multiMetadataMap.set(id, registrations);
+  }
+
+  private getOrCreateInheritedMultiMetadata<T>(id: ServiceIdentifier<T>, sourceMetadata: Metadata<T>): Metadata<T> {
+    let inheritedRegistrations = this.inheritedMultiMetadataMap.get(id);
+
+    if (!inheritedRegistrations) {
+      inheritedRegistrations = new Map();
+      this.inheritedMultiMetadataMap.set(id, inheritedRegistrations);
+    }
+
+    const existingMetadata = inheritedRegistrations.get(sourceMetadata) as Metadata<T> | undefined;
+
+    if (existingMetadata) {
+      return existingMetadata;
+    }
+
+    const metadata = this.cloneMetadata(sourceMetadata);
+
+    inheritedRegistrations.set(sourceMetadata, metadata);
+
+    return metadata;
+  }
+
+  private defineInjection(instance: object, injection: InjectionMetadata) {
+    const value = injection.multiple ? this.getMany(injection.id) : this.get(injection.id);
+
+    Object.defineProperty(instance, injection.name, {
+      value,
+      writable: true,
+      configurable: true,
+    });
+  }
+
+  private resolveMetadata<T>(metadata: Metadata<T>, resolutionContainer: Container): T {
+    if (metadata.scope !== 'transient' && metadata.value !== EMPTY_VALUE) {
+      return metadata.value as T;
+    }
+
+    if (resolutionContainer.resolving.has(metadata)) {
+      throw new CircularDependencyError([...resolutionContainer.resolvingPath, metadata.id]);
+    }
+
+    resolutionContainer.resolving.add(metadata);
+    resolutionContainer.resolvingPath.push(metadata.id);
+
+    try {
+      const instance: T = metadata.factory ? metadata.factory(resolutionContainer) : new metadata.Class!();
+
+      for (const injection of metadata.injections) {
+        this.defineInjection(instance as object, injection);
+      }
+
+      if (metadata.scope !== 'transient') {
+        metadata.value = instance;
+      }
+
+      return instance;
+    } finally {
+      resolutionContainer.resolving.delete(metadata);
+      resolutionContainer.resolvingPath.pop();
+    }
+  }
+
+  private resetMetadataValues() {
+    this.metadataMap.forEach((metadata) => {
+      metadata.value = EMPTY_VALUE;
+    });
+
+    this.multiMetadataMap.forEach((registrations) => {
+      registrations.forEach((metadata) => {
+        metadata.value = EMPTY_VALUE;
+      });
+    });
+
+    this.inheritedMultiMetadataMap.forEach((registrations) => {
+      registrations.forEach((metadata) => {
+        metadata.value = EMPTY_VALUE;
+      });
+    });
+  }
+
+  private collectOwnedValues(): Set<unknown> {
+    const ownedValues = new Set<unknown>();
+
+    this.bindingMap.forEach((value) => {
+      ownedValues.add(value);
+    });
+
+    this.multiBindingMap.forEach((values) => {
+      values.forEach((value) => {
+        ownedValues.add(value);
+      });
+    });
+
+    this.metadataMap.forEach((metadata) => {
+      if (metadata.value !== EMPTY_VALUE) {
+        ownedValues.add(metadata.value);
+      }
+    });
+
+    this.multiMetadataMap.forEach((registrations) => {
+      registrations.forEach((metadata) => {
+        if (metadata.value !== EMPTY_VALUE) {
+          ownedValues.add(metadata.value);
+        }
+      });
+    });
+
+    this.inheritedMultiMetadataMap.forEach((registrations) => {
+      registrations.forEach((metadata) => {
+        if (metadata.value !== EMPTY_VALUE) {
+          ownedValues.add(metadata.value);
+        }
+      });
+    });
+
+    return ownedValues;
+  }
+
+  public unlinkParent() {
+    this.parentContainer?.children.delete(this);
+    this.parentContainer = undefined;
+  }
+
+  public hasParent(parent: Container | undefined): boolean {
+    return this.parentContainer === parent;
+  }
+
   public static of(id: ContainerIdentifier = 'default') {
     if (id === 'default') {
       return ContainerRegistry.defaultContainer;
@@ -119,35 +294,56 @@ export class Container {
       return ContainerRegistry.getContainer(id)!;
     }
 
-    const container = new Container(id);
+    const container = new Container(id, ContainerRegistry.defaultContainer);
 
     ContainerRegistry.registerContainer(container);
 
     return container;
   }
 
-  /**
-   * Registers service metadata in this container.
-   *
-   * This is a low-level API for manual registration when you are not using
-   * `@Service()`. Registering a `singleton` on a named container stores it in
-   * the default container so it can be shared across containers.
-   *
-   * @param metadata The service metadata to register.
-   * @returns The current container.
-   */
+  public static ofChild(id: ContainerIdentifier, parent: Container | ContainerIdentifier = 'default') {
+    const parentContainer = parent instanceof Container ? parent : Container.of(parent);
+
+    if (id === 'default') {
+      return ContainerRegistry.defaultContainer;
+    }
+
+    const existingContainer = ContainerRegistry.getContainer(id);
+
+    if (existingContainer) {
+      if (!existingContainer.hasParent(parentContainer)) {
+        throw new Error(`Container already exists with a different parent: ${String(id)}`);
+      }
+
+      return existingContainer;
+    }
+
+    const container = new Container(id, parentContainer);
+
+    ContainerRegistry.registerContainer(container);
+
+    return container;
+  }
+
+  public ofChild(id: ContainerIdentifier) {
+    return Container.ofChild(id, this);
+  }
+
   public register<T>(metadata: Metadata<T>) {
     this.ensureNotDisposed();
 
-    if (metadata.scope === 'singleton' && !this.isDefault()) {
-      ContainerRegistry.defaultContainer.register(metadata);
+    if (metadata.scope === 'singleton' && !this.isRoot()) {
+      this.getRoot().register(metadata);
       this.metadataMap.delete(metadata.id);
       return this;
     }
 
-    const newMetadata: Metadata<T> = {
-      ...metadata,
-    };
+    const newMetadata = this.cloneMetadata(metadata);
+
+    if (newMetadata.multiple) {
+      this.pushMultiMetadata(newMetadata.id, newMetadata);
+      return this;
+    }
 
     const existingMetadata = this.metadataMap.get(newMetadata.id);
 
@@ -160,30 +356,18 @@ export class Container {
     return this;
   }
 
-  /**
-   * Returns whether this container has a local registration for an identifier.
-   *
-   * This only checks registrations stored on the current container and does
-   * not indicate whether the identifier can be resolved through fallback.
-   *
-   * @param id The service identifier to check.
-   * @returns `true` when the current container has a local registration.
-   */
   public has(id: ServiceIdentifier): boolean {
     this.ensureNotDisposed();
-    return this.bindingMap.has(id) || this.metadataMap.has(id);
+
+    return (
+      this.bindingMap.has(id) ||
+      this.metadataMap.has(id) ||
+      (this.multiBindingMap.get(id)?.length ?? 0) > 0 ||
+      (this.multiMetadataMap.get(id)?.length ?? 0) > 0 ||
+      (this.inheritedMultiMetadataMap.get(id)?.size ?? 0) > 0
+    );
   }
 
-  /**
-   * Registers a value or provider for a service identifier.
-   *
-   * Use a plain value to bind an explicit instance, or a provider object to
-   * resolve by class or factory.
-   *
-   * @param id The service identifier to register.
-   * @param valueOrProvider The bound value or provider definition.
-   * @returns The current container.
-   */
   public set<T>(id: ServiceIdentifier<T>, value: T): this;
   public set<T>(id: ServiceIdentifier<T>, provider: ServiceProvider<T>): this;
   public set<T>(id: ServiceIdentifier<T>, valueOrProvider: T | ServiceProvider<T>) {
@@ -210,58 +394,55 @@ export class Container {
     return this;
   }
 
-  /**
-   * Removes a local binding or registration from this container.
-   *
-   * @param id The service identifier to remove.
-   * @returns The current container.
-   */
+  public add<T>(id: ServiceIdentifier<T>, value: T): this;
+  public add<T>(id: ServiceIdentifier<T>, provider: ServiceProvider<T>): this;
+  public add<T>(id: ServiceIdentifier<T>, valueOrProvider: T | ServiceProvider<T>) {
+    this.ensureNotDisposed();
+
+    if (this.isValueProvider(valueOrProvider)) {
+      this.pushMultiBinding(id, valueOrProvider.useValue);
+      return this;
+    }
+
+    if (this.isClassProvider(valueOrProvider)) {
+      return this.register(this.getClassProviderMetadata(id, valueOrProvider, true));
+    }
+
+    if (this.isFactoryProvider(valueOrProvider)) {
+      return this.register(this.getFactoryProviderMetadata(id, valueOrProvider, true));
+    }
+
+    this.pushMultiBinding(id, valueOrProvider);
+    return this;
+  }
+
   public remove(id: ServiceIdentifier) {
     this.ensureNotDisposed();
     this.bindingMap.delete(id);
     this.metadataMap.delete(id);
+    this.multiBindingMap.delete(id);
+    this.multiMetadataMap.delete(id);
+    this.inheritedMultiMetadataMap.delete(id);
     return this;
   }
 
-  /**
-   * Resets services stored in this container.
-   *
-   * Use `'value'` to clear cached instances while keeping registrations, or
-   * `'service'` to remove local registrations and bindings entirely.
-   *
-   * @param strategy The reset strategy to apply.
-   * @returns The current container.
-   */
   public reset(strategy: 'value' | 'service' = 'value') {
     this.ensureNotDisposed();
 
     if (strategy === 'value') {
-      this.metadataMap.forEach((metadata) => {
-        metadata.value = EMPTY_VALUE;
-      });
-
-      return this;
-    } else {
-      this.bindingMap.clear();
-      this.metadataMap.clear();
-
+      this.resetMetadataValues();
       return this;
     }
+
+    this.bindingMap.clear();
+    this.metadataMap.clear();
+    this.multiBindingMap.clear();
+    this.multiMetadataMap.clear();
+    this.inheritedMultiMetadataMap.clear();
+
+    return this;
   }
 
-  /**
-   * Resolves a service from this container.
-   *
-   * If the current container does not have a local registration, named
-   * containers can continue resolution through the default container according
-   * to the service scope. Services are instantiated with `new Class()` and do
-   * not support constructor arguments.
-   *
-   * @param id The service identifier to resolve.
-   * @returns The resolved service instance or bound value.
-   * @throws {ServiceNotFoundError} If no service is registered for the identifier.
-   * @throws {CircularDependencyError} If the dependency graph contains a cycle.
-   */
   public get<T>(id: ServiceIdentifier<T>): T {
     this.ensureNotDisposed();
 
@@ -269,82 +450,82 @@ export class Container {
       return this.bindingMap.get(id) as T;
     }
 
-    let metadata = this.metadataMap.get(id) as Metadata<T> | undefined;
+    const localMetadata = this.metadataMap.get(id) as Metadata<T> | undefined;
 
-    if (!metadata && !this.isDefault()) {
-      if (ContainerRegistry.defaultContainer.bindingMap.has(id)) {
-        return ContainerRegistry.defaultContainer.bindingMap.get(id) as T;
-      }
-
-      const defaultMetadata = ContainerRegistry.defaultContainer.metadataMap.get(id) as Metadata<T> | undefined;
-
-      if (!defaultMetadata) {
-        throw new ServiceNotFoundError(id);
-      }
-
-      if (defaultMetadata.scope === 'singleton') {
-        return ContainerRegistry.defaultContainer.get(id);
-      }
-
-      if (defaultMetadata.scope === 'container') {
-        metadata = {
-          ...defaultMetadata,
-          injections: [...defaultMetadata.injections],
-          value: EMPTY_VALUE,
-        };
-
-        this.metadataMap.set(id, metadata);
-      } else {
-        metadata = defaultMetadata;
-      }
+    if (localMetadata) {
+      return this.resolveMetadata(localMetadata, this);
     }
 
-    if (!metadata) {
+    const bindingOwner = this.parentContainer?.findBindingOwner(id);
+
+    if (bindingOwner) {
+      return bindingOwner.bindingMap.get(id) as T;
+    }
+
+    const metadataOwner = this.parentContainer?.findMetadataOwner(id);
+
+    if (!metadataOwner) {
       throw new ServiceNotFoundError(id);
     }
 
-    if (metadata.scope !== 'transient' && metadata.value !== EMPTY_VALUE) {
-      return metadata.value as T;
+    const metadata = metadataOwner.metadataMap.get(id) as Metadata<T>;
+
+    if (metadata.scope === 'singleton') {
+      return metadataOwner.resolveMetadata(metadata, metadataOwner);
     }
 
-    if (this.resolving.has(id)) {
-      throw new CircularDependencyError([...this.resolvingPath, id]);
+    if (metadata.scope === 'container') {
+      const localizedMetadata = this.cloneMetadata(metadata);
+
+      this.metadataMap.set(id, localizedMetadata);
+
+      return this.resolveMetadata(localizedMetadata, this);
     }
 
-    this.resolving.add(id);
-    this.resolvingPath.push(id);
-
-    try {
-      const instance: T = metadata.factory ? metadata.factory(this) : new metadata.Class!();
-
-      for (const injection of metadata.injections) {
-        Object.defineProperty(instance, injection.name, {
-          value: this.get(injection.id),
-          writable: true,
-          configurable: true,
-        });
-      }
-
-      if (metadata.scope !== 'transient') {
-        metadata.value = instance;
-      }
-
-      return instance;
-    } finally {
-      this.resolving.delete(id);
-      this.resolvingPath.pop();
-    }
+    return this.resolveMetadata(metadata, this);
   }
 
-  /**
-   * Resolves a service if it exists, otherwise returns `undefined`.
-   *
-   * Unlike `get()`, this only suppresses `ServiceNotFoundError`. Other errors,
-   * such as circular dependencies or disposed-container access, still surface.
-   *
-   * @param id The service identifier to resolve.
-   * @returns The resolved value, or `undefined` when the service is missing.
-   */
+  public getMany<T>(id: ServiceIdentifier<T>): T[] {
+    this.ensureNotDisposed();
+
+    const resolved: T[] = [];
+
+    for (const container of this.getLineage()) {
+      const bindings = container.multiBindingMap.get(id) ?? [];
+
+      resolved.push(...(bindings as T[]));
+
+      const registrations = container.multiMetadataMap.get(id) as Metadata<T>[] | undefined;
+
+      if (!registrations) {
+        continue;
+      }
+
+      for (const metadata of registrations) {
+        if (container === this) {
+          resolved.push(this.resolveMetadata(metadata, this));
+          continue;
+        }
+
+        if (metadata.scope === 'singleton') {
+          resolved.push(container.resolveMetadata(metadata, container));
+          continue;
+        }
+
+        if (metadata.scope === 'container') {
+          const localizedMetadata = this.getOrCreateInheritedMultiMetadata(id, metadata);
+
+          resolved.push(this.resolveMetadata(localizedMetadata, this));
+          continue;
+        }
+
+        resolved.push(this.resolveMetadata(metadata, this));
+      }
+    }
+
+    return resolved;
+  }
+
   public tryGet<T>(id: ServiceIdentifier<T>): T | undefined {
     this.ensureNotDisposed();
 
@@ -355,34 +536,27 @@ export class Container {
     return this.get(id);
   }
 
-  /**
-   * Disposes this container instance and clears all local registrations.
-   *
-   * The container becomes unusable after disposal. Cached service instances and
-   * bound values that expose an async or sync `dispose()` method are awaited in
-   * the order they were discovered.
-   */
   public async dispose(): Promise<void> {
     if (this.disposed) {
       return;
     }
 
-    const ownedValues = new Set<unknown>();
+    const childContainers = [...this.children];
 
-    this.bindingMap.forEach((value) => {
-      ownedValues.add(value);
-    });
+    for (const child of childContainers) {
+      await child.dispose();
+    }
 
-    this.metadataMap.forEach((metadata) => {
-      if (metadata.value !== EMPTY_VALUE) {
-        ownedValues.add(metadata.value);
-      }
-    });
+    const ownedValues = this.collectOwnedValues();
 
     this.disposed = true;
     ContainerRegistry.disposeContainer(this);
     this.bindingMap.clear();
     this.metadataMap.clear();
+    this.multiBindingMap.clear();
+    this.multiMetadataMap.clear();
+    this.inheritedMultiMetadataMap.clear();
+    this.children.clear();
     this.resolving.clear();
     this.resolvingPath = [];
 
@@ -393,16 +567,6 @@ export class Container {
     }
   }
 
-  private isDefault() {
-    return this === ContainerRegistry.defaultContainer;
-  }
-
-  /**
-   * Resets a container by its identifier.
-   *
-   * @param containerId The container to reset.
-   * @param options Reset options.
-   */
   public static reset(containerId: ContainerIdentifier, options?: { strategy?: 'value' | 'service' }) {
     const container = ContainerRegistry.getContainer(containerId);
 

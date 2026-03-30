@@ -104,6 +104,8 @@ export interface Metadata<T = unknown> {
    */
   value: T | typeof EMPTY_VALUE;
 
+  multiple?: boolean;
+
   /**
    * An optional factory used to create the resolved value.
    */

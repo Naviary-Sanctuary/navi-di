@@ -29,4 +29,6 @@ export interface ServiceOption {
    * The lifetime used when the service is resolved.
    */
   scope?: ServiceScope;
+
+  multiple?: boolean;
 }

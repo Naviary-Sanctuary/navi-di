@@ -13,6 +13,8 @@ export interface InjectionMetadata {
    * The class field that receives the resolved dependency.
    */
   name: string | symbol;
+
+  multiple?: boolean;
 }
 
 /**
